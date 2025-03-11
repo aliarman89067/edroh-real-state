@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
+import { wktToGeoJSON } from "@terraformer/wkt";
 
 const prisma = new PrismaClient();
 
@@ -91,5 +92,125 @@ export const updateTenant = async (
     res.status(201).json(updateTenant);
   } catch (error: any) {
     res.status(400).json(`Error updating tenant ${error.message}`);
+  }
+};
+
+export const getCurrentResidences = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { cognitoId } = req.params;
+    const tenant = await prisma.tenant.findUnique({
+      where: {
+        cognitoId,
+      },
+    });
+    if (!tenant) {
+      res.status(404).json({ message: "Invalid cognitoId!" });
+    }
+    const properties = await prisma.property.findMany({
+      where: {
+        tenants: { some: { cognitoId } },
+      },
+      include: {
+        location: true,
+      },
+    });
+    const residencesWithFormattedLocation = await Promise.all(
+      properties.map(async (property) => {
+        const coordinates: { coordinates: string }[] = await prisma.$queryRaw`
+                SELECT ST_asText(coordinates) as coordinates FROM "Location" WHERE id = ${property.location.id}
+            `;
+        const geoJSON: any = wktToGeoJSON(coordinates[0]?.coordinates || "");
+        const longitude = geoJSON.coordinates[0];
+        const latitude = geoJSON.coordinates[1];
+
+        return {
+          ...property,
+          location: {
+            ...property.location,
+            coordinates: {
+              longitude,
+              latitude,
+            },
+          },
+        };
+      })
+    );
+    res.json(residencesWithFormattedLocation);
+  } catch (error: any) {
+    res.status(500).json({ message: "Error retreiving manager plural", error });
+  }
+};
+
+export const addFavoriteProperty = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { cognitoId, propertyId } = req.params;
+    const tenant = await prisma.tenant.findUnique({
+      where: {
+        cognitoId,
+      },
+      include: {
+        favorites: true,
+      },
+    });
+    const propertyIdNumber = Number(propertyId);
+    const tenantFavorites = tenant?.favorites || [];
+    if (!tenantFavorites.some((prev) => prev.id === propertyIdNumber)) {
+      const updatedTenant = await prisma.tenant.update({
+        where: {
+          cognitoId,
+        },
+        data: {
+          favorites: {
+            connect: {
+              id: propertyIdNumber,
+            },
+          },
+        },
+        include: {
+          favorites: true,
+        },
+      });
+      res.json(updatedTenant);
+    }
+    res.status(409).json({ message: "Property already exist as favorite" });
+  } catch (error: any) {
+    res
+      .status(400)
+      .json({ message: `Error adding to favorite ${error.message}` });
+  }
+};
+export const removeFavoriteProperty = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { cognitoId, propertyId } = req.params;
+    const propertyIdNumber = Number(propertyId);
+    const updatedTenant = await prisma.tenant.update({
+      where: {
+        cognitoId,
+      },
+      data: {
+        favorites: {
+          disconnect: {
+            id: propertyIdNumber,
+          },
+        },
+      },
+      include: {
+        favorites: true,
+      },
+    });
+    res.json(updatedTenant);
+  } catch (error: any) {
+    res
+      .status(400)
+      .json({ message: `Error removing to favorite ${error.message}` });
   }
 };

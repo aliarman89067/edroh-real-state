@@ -24,7 +24,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
       setIsloading(false);
     }
   }, [authData, router, pathname]);
-  if (authLoading || isLoading) return <>Loang...</>;
+  if (authLoading || isLoading) return <>Loading...</>;
   return (
     <div className="h-full w-full">
       <Navbar />
